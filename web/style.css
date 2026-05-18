@@ -1,0 +1,103 @@
+/* ---------- Layout (shared by both themes) ----------------------------- */
+body { font-family: sans-serif; max-width: 640px; margin: 2rem auto; padding: 0 1rem; }
+h1 { font-size: 1.4rem; }
+
+#summary {
+  display: flex;
+  align-items: center;
+  gap: .75rem;
+  padding: .6rem .8rem;
+  background: #f4f4f6;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  margin: 1rem 0;
+}
+#summary .label { font-weight: 600; }
+#summary .count {
+  font-variant-numeric: tabular-nums;
+  font-size: 1.2rem;
+}
+#summary button { margin-left: auto; }
+
+#addRow { display: flex; gap: .5rem; margin: 1rem 0; }
+#addRow input { flex: 1; padding: .4rem; }
+
+ul { list-style: none; padding: 0; }
+li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: .4rem .6rem;
+  border: 1px solid #ddd;
+  margin-bottom: .3rem;
+  border-radius: 4px;
+  gap: .75rem;
+}
+li .value { flex: 1; font-family: monospace; }
+li .count {
+  color: #666;
+  font-variant-numeric: tabular-nums;
+  font-size: .9rem;
+}
+button { padding: .3rem .8rem; cursor: pointer; }
+
+/* Smooth-ish transitions when the user toggles the theme. */
+body, #summary, #addRow input, li, button {
+  transition: background-color .15s ease, color .15s ease, border-color .15s ease;
+}
+
+/* ---------- Dark theme (activated by <html class="dark">) -------------- */
+/* Triggered from script.js's applyTheme() which mirrors Zoraxy's parent
+   theme state set by #themeColorButton. */
+
+html.dark body {
+  background: #1e1e1e;
+  color: #e0e0e0;
+}
+html.dark code {
+  background: #2a2a2a;
+  padding: 0 .25em;
+  border-radius: 3px;
+}
+
+html.dark #summary {
+  background: #2a2a2a;
+  border-color: #444;
+}
+
+html.dark #addRow input {
+  background: #2a2a2a;
+  color: #e0e0e0;
+  border: 1px solid #444;
+}
+html.dark #addRow input::placeholder { color: #888; }
+
+html.dark li {
+  background: #242424;
+  border-color: #444;
+}
+html.dark li .count { color: #999; }
+
+html.dark button {
+  background: #333;
+  color: #e0e0e0;
+  border: 1px solid #555;
+}
+html.dark button:hover { background: #3d3d3d; }
+
+/* Armed state for the reset button: red so the user understands the
+   next click is destructive. Same colour in both themes — red reads as
+   "danger" regardless of background. */
+button.armed {
+  background: #c0392b;
+  color: #fff;
+  border-color: #a02818;
+}
+button.armed:hover { background: #b03325; }
+
+html.dark button.armed {
+  background: #c0392b;
+  color: #fff;
+  border-color: #a02818;
+}
+html.dark button.armed:hover { background: #b03325; }

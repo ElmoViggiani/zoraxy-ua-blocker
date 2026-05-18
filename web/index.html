@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>User-Agent Blocker</title>
+  <meta name="zoraxy.csrf.Token" content="{{.csrfToken}}" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <h1>User-Agent Blocker</h1>
+  <p>Requests whose <code>User-Agent</code> header contains any of the
+     substrings below (case-insensitive) will be blocked with HTTP 403.</p>
+
+  <!-- Headline counter + reset control. Populated by script.js. -->
+  <div id="summary">
+    <span class="label">Total blocked:</span>
+    <span id="totalCount" class="count">0</span>
+    <button type="button" id="resetBtn">Reset all counts</button>
+  </div>
+
+  <!-- Add form. Plain div + button (not <form>) to bypass Zoraxy's
+       iframe sandbox missing allow-forms. -->
+  <div id="addRow">
+    <input type="text" id="value" placeholder="e.g. Googlebot" />
+    <button type="button" id="submitBtn">Submit</button>
+  </div>
+
+  <!-- Per-entry list, rendered by script.js with value + count + delete. -->
+  <ul id="list"></ul>
+
+  <script src="script.js"></script>
+</body>
+</html>
