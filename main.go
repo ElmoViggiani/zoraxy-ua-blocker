@@ -187,7 +187,7 @@ func sniffHandler(req *zoraxy_plugin.DynamicSniffForwardRequest) zoraxy_plugin.S
 func handleIngress(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusForbidden)
-	_, _ = w.Write([]byte("Forbidden: User-Agent blocked"))
+	_, _ = w.Write([]byte("Forbidden"))
 }
 
 // ---------------------------------------------------------------------------
