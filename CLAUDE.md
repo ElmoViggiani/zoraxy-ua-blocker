@@ -10,8 +10,12 @@ A Zoraxy v3 reverse-proxy plugin (Go binary) that blocks incoming HTTP requests 
 
 ```sh
 go mod tidy
-go build -o zoraxy-ua-blocker
+go build -o zoraxy-ua-blocker            # local dev / vet only
+env GOOS=linux GOARCH=amd64 \
+    go build -o zoraxy-ua-blocker        # deployable artifact (Zoraxy runs on Linux)
 ```
+
+Development happens on macOS; the deploy target is a Linux Zoraxy host. A plain `go build` on macOS produces a darwin binary that the target cannot execute — always cross-compile when producing the artifact to ship.
 
 There are no tests in the repo. The binary is not run standalone — Zoraxy invokes it with `-introspect` (to read its manifest) and `-configure <json>` (to start it on an assigned port). See `mod/plugins/zoraxy_plugin/zoraxy_plugin.go` for the handshake protocol.
 
@@ -28,5 +32,6 @@ The plugin is a small HTTP server (bound to `127.0.0.1:<port>` assigned by Zorax
 ## Things to know before editing
 
 - **Don't edit `mod/plugins/zoraxy_plugin/`** — it's vendored from upstream Zoraxy (per its `README.txt`, copy/replace rather than modify). Changes there get clobbered on SDK updates.
-- **Matching is substring + case-insensitive** — `RecordMatch` lowercases both sides and uses `strings.Contains`. `Add` dedupes via `strings.EqualFold`. Don't tighten to exact match without checking the README's documented behavior.
+- **Matching is substring + case-insensitive** — `RecordMatch` uses `strings.Contains` against a cached lowercased copy of the entry value (see invariant below). `Add` dedupes via `strings.EqualFold`. Don't tighten to exact match without checking the README's documented behavior.
+- **`Entry.lower` invariant** — `Entry` has an unexported `lower` field caching `strings.ToLower(Value)`, used by the hot-path match. It is populated in two places: `Add` (when a new entry is created) and `NewBlockList` (after JSON unmarshal). Any new code path that constructs an `Entry` directly must set `lower` too, or matching will silently fail for that row. The field is unexported, so `encoding/json` skips it and the on-disk shape is unchanged.
 - **Counter accounting on Remove** — `Remove` subtracts the deleted entry's count from `TotalBlocked` so the UI's headline number stays equal to the sum of visible per-entry counts. Preserve this invariant.
