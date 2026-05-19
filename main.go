@@ -123,9 +123,21 @@ func main() {
 	mux.HandleFunc(UI_PATH+"/api/reset", handleAPIReset)
 
 	// --- 7. Run --------------------------------------------------------
+	// Explicit http.Server with timeouts so a slow or stuck client can't
+	// pin a goroutine indefinitely. Zoraxy talks to us via 127.0.0.1 so
+	// requests are fast in practice; the limits exist for misbehaving
+	// peers (slowloris-style probes, half-open connections).
 	addr := fmt.Sprintf("127.0.0.1:%d", runtimeCfg.Port)
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      10 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
 	log.Printf("%s listening on %s", PLUGIN_NAME, addr)
-	if err := http.ListenAndServe(addr, mux); err != nil {
+	if err := srv.ListenAndServe(); err != nil {
 		log.Fatalf("plugin HTTP server died: %v", err)
 	}
 }
