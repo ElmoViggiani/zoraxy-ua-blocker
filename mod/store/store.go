@@ -11,10 +11,13 @@ import (
 )
 
 // Entry is one row in the blocklist: a User-Agent substring to match
-// against, and a counter of how many times it has matched.
+// against, and a counter of how many times it has matched. `lower` is
+// the lowercased Value, cached so RecordMatch can skip allocating a
+// fresh lowercased copy of every entry on every request.
 type Entry struct {
 	Value string `json:"value"`
 	Count int64  `json:"count"`
+	lower string
 }
 
 // Snapshot is both the on-disk file shape and the read-only view returned
@@ -70,6 +73,9 @@ func NewBlockList(path string) (*BlockList, error) {
 	if bl.entries == nil {
 		bl.entries = []Entry{}
 	}
+	for i := range bl.entries {
+		bl.entries[i].lower = strings.ToLower(bl.entries[i].Value)
+	}
 	bl.totalBlocked = snap.TotalBlocked
 	return bl, nil
 }
@@ -97,7 +103,7 @@ func (bl *BlockList) Add(value string) error {
 			return nil
 		}
 	}
-	bl.entries = append(bl.entries, Entry{Value: value, Count: 0})
+	bl.entries = append(bl.entries, Entry{Value: value, lower: strings.ToLower(value)})
 	return bl.save()
 }
 
@@ -141,7 +147,7 @@ func (bl *BlockList) RecordMatch(userAgent string) string {
 	defer bl.mu.Unlock()
 	uaLower := strings.ToLower(userAgent)
 	for i := range bl.entries {
-		if strings.Contains(uaLower, strings.ToLower(bl.entries[i].Value)) {
+		if strings.Contains(uaLower, bl.entries[i].lower) {
 			bl.entries[i].Count++
 			bl.totalBlocked++
 			bl.dirty = true
