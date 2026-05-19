@@ -8,12 +8,18 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 )
 
 // Entry is one row in the blocklist: a User-Agent substring to match
 // against, and a counter of how many times it has matched. `lower` is
 // the lowercased Value, cached so RecordMatch can skip allocating a
 // fresh lowercased copy of every entry on every request.
+//
+// Count is incremented by RecordMatch under the BlockList's RLock, so
+// it must be accessed via sync/atomic whenever other goroutines might
+// be concurrently incrementing. Methods holding the write Lock have
+// exclusive access and may read/write Count directly.
 type Entry struct {
 	Value string `json:"value"`
 	Count int64  `json:"count"`
@@ -29,15 +35,25 @@ type Snapshot struct {
 }
 
 // BlockList holds the live in-memory state plus the path it's persisted
-// to. `dirty` tracks whether RecordMatch increments need flushing — used
-// by the background flusher to avoid disk writes when nothing has
-// changed since the last tick.
+// to.
+//
+// Concurrency model:
+//   - Add/Remove/ResetCounts hold the write Lock and have exclusive
+//     access; they may read/write counters directly.
+//   - RecordMatch holds RLock so many requests can match concurrently;
+//     it uses sync/atomic on Entry.Count and totalBlocked.
+//   - Snapshot and FlushIfDirty hold RLock and build a deep copy with
+//     atomic loads, then release the lock before any expensive work
+//     (JSON marshal, disk write).
+//
+// `dirty` signals that there are unsaved counter increments. It is
+// written from both RLock and Lock paths, so it is atomic.Bool.
 type BlockList struct {
 	mu           sync.RWMutex
 	path         string
 	entries      []Entry
-	totalBlocked int64
-	dirty        bool
+	totalBlocked int64 // see Entry.Count comment
+	dirty        atomic.Bool
 }
 
 // NewBlockList opens (or creates) the JSON file at `path` and returns a
@@ -49,7 +65,7 @@ func NewBlockList(path string) (*BlockList, error) {
 
 	// Missing file: create empty and return.
 	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
-		if err := bl.save(); err != nil {
+		if err := bl.saveLocked(); err != nil {
 			return nil, err
 		}
 		return bl, nil
@@ -86,9 +102,14 @@ func (bl *BlockList) Snapshot() Snapshot {
 	defer bl.mu.RUnlock()
 	out := Snapshot{
 		Entries:      make([]Entry, len(bl.entries)),
-		TotalBlocked: bl.totalBlocked,
+		TotalBlocked: atomic.LoadInt64(&bl.totalBlocked),
 	}
-	copy(out.Entries, bl.entries)
+	for i := range bl.entries {
+		out.Entries[i] = Entry{
+			Value: bl.entries[i].Value,
+			Count: atomic.LoadInt64(&bl.entries[i].Count),
+		}
+	}
 	return out
 }
 
@@ -104,7 +125,11 @@ func (bl *BlockList) Add(value string) error {
 		}
 	}
 	bl.entries = append(bl.entries, Entry{Value: value, lower: strings.ToLower(value)})
-	return bl.save()
+	if err := bl.saveLocked(); err != nil {
+		return err
+	}
+	bl.dirty.Store(false)
+	return nil
 }
 
 // Remove deletes the first entry matching value (case-insensitive). The
@@ -120,7 +145,11 @@ func (bl *BlockList) Remove(value string) error {
 				bl.totalBlocked = 0
 			}
 			bl.entries = append(bl.entries[:i], bl.entries[i+1:]...)
-			return bl.save()
+			if err := bl.saveLocked(); err != nil {
+				return err
+			}
+			bl.dirty.Store(false)
+			return nil
 		}
 	}
 	return nil
@@ -134,7 +163,11 @@ func (bl *BlockList) ResetCounts() error {
 		bl.entries[i].Count = 0
 	}
 	bl.totalBlocked = 0
-	return bl.save()
+	if err := bl.saveLocked(); err != nil {
+		return err
+	}
+	bl.dirty.Store(false)
+	return nil
 }
 
 // RecordMatch checks the User-Agent against the blocklist and, if any
@@ -142,15 +175,18 @@ func (bl *BlockList) ResetCounts() error {
 // counter and the global total. Returns the matched entry value, or ""
 // for no match. The increment is in-memory only; the background flusher
 // persists it.
+//
+// Runs under RLock so many requests can match concurrently. Increments
+// go through sync/atomic to stay race-free with other matchers.
 func (bl *BlockList) RecordMatch(userAgent string) string {
-	bl.mu.Lock()
-	defer bl.mu.Unlock()
+	bl.mu.RLock()
+	defer bl.mu.RUnlock()
 	uaLower := strings.ToLower(userAgent)
 	for i := range bl.entries {
 		if strings.Contains(uaLower, bl.entries[i].lower) {
-			bl.entries[i].Count++
-			bl.totalBlocked++
-			bl.dirty = true
+			atomic.AddInt64(&bl.entries[i].Count, 1)
+			atomic.AddInt64(&bl.totalBlocked, 1)
+			bl.dirty.Store(true)
 			return bl.entries[i].Value
 		}
 	}
@@ -159,25 +195,53 @@ func (bl *BlockList) RecordMatch(userAgent string) string {
 
 // FlushIfDirty persists current state to disk if there are unsaved
 // counter increments. Cheap no-op when nothing has changed.
+//
+// Snapshots state under RLock then releases the lock before doing the
+// JSON marshal and disk write, so disk latency never stalls the request
+// hot path. On write failure the dirty flag is re-set so the next tick
+// retries.
 func (bl *BlockList) FlushIfDirty() error {
-	bl.mu.Lock()
-	defer bl.mu.Unlock()
-	if !bl.dirty {
+	if !bl.dirty.Load() {
 		return nil
 	}
-	if err := bl.save(); err != nil {
+	bl.mu.RLock()
+	snap := Snapshot{
+		Entries:      make([]Entry, len(bl.entries)),
+		TotalBlocked: atomic.LoadInt64(&bl.totalBlocked),
+	}
+	for i := range bl.entries {
+		snap.Entries[i] = Entry{
+			Value: bl.entries[i].Value,
+			Count: atomic.LoadInt64(&bl.entries[i].Count),
+		}
+	}
+	bl.mu.RUnlock()
+
+	// Clear dirty before the disk write. If a concurrent RecordMatch
+	// sets it back to true while writeSnapshot is running, that
+	// increment is captured next tick — at worst we re-marshal some
+	// unchanged counters, which is idempotent.
+	bl.dirty.Store(false)
+	if err := writeSnapshot(bl.path, snap); err != nil {
+		bl.dirty.Store(true)
 		return err
 	}
-	bl.dirty = false
 	return nil
 }
 
-// save serialises current state to disk. Caller must hold the write lock.
-func (bl *BlockList) save() error {
+// saveLocked serialises current state to disk. Caller must hold the
+// write Lock so the slice and counters cannot change during marshal.
+func (bl *BlockList) saveLocked() error {
 	out := Snapshot{Entries: bl.entries, TotalBlocked: bl.totalBlocked}
-	data, err := json.MarshalIndent(out, "", "  ")
+	return writeSnapshot(bl.path, out)
+}
+
+// writeSnapshot marshals snap and writes it to path. No locks are
+// taken — the caller owns snap and must not mutate it concurrently.
+func writeSnapshot(path string, snap Snapshot) error {
+	data, err := json.MarshalIndent(snap, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(bl.path, data, 0644)
+	return os.WriteFile(path, data, 0644)
 }
