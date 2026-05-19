@@ -238,10 +238,23 @@ func (bl *BlockList) saveLocked() error {
 
 // writeSnapshot marshals snap and writes it to path. No locks are
 // taken — the caller owns snap and must not mutate it concurrently.
+//
+// Writes go through `path + ".tmp"` followed by os.Rename, so a crash
+// (panic, SIGKILL, OOM) mid-write leaves the original file untouched
+// instead of truncated. On POSIX, the rename is atomic with respect to
+// other processes reading the file.
 func writeSnapshot(path string, snap Snapshot) error {
 	data, err := json.MarshalIndent(snap, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0644)
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0644); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp) // best-effort cleanup; rename failure is the real error
+		return err
+	}
+	return nil
 }
