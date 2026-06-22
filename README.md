@@ -22,6 +22,11 @@ receive HTTP **403 Forbidden**.
 5. Open the plugin UI from the Plugin Manager and add entries such as
    `wget`, `curl`, `spider`, `Googlebot`.
 
+Each entry has an enable/disable toggle. A disabled entry stays in the
+list and keeps its block count, but is skipped when matching incoming
+requests — useful for temporarily pausing a rule without losing it. The
+list shows disabled entries greyed out with the value struck through.
+
 ## Storage
 
 The blocklist is persisted to `uablocker_data.json` next to the plugin

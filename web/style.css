@@ -41,6 +41,49 @@ li .count {
 }
 button { padding: .3rem .8rem; cursor: pointer; }
 
+/* ---------- Per-entry enable/disable toggle ---------------------------- */
+/* Checkbox-as-switch: the native input is hidden and a .slider span is
+   styled into a sliding track + knob. Checked = enabled. */
+.switch {
+  position: relative;
+  display: inline-block;
+  flex: none;
+  width: 34px;
+  height: 18px;
+}
+.switch input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.switch .slider {
+  position: absolute;
+  inset: 0;
+  background: #bbb;
+  border-radius: 18px;
+  transition: background-color .15s ease;
+}
+.switch .slider::before {
+  content: "";
+  position: absolute;
+  height: 14px;
+  width: 14px;
+  left: 2px;
+  top: 2px;
+  background: #fff;
+  border-radius: 50%;
+  transition: transform .15s ease;
+}
+.switch input:checked + .slider { background: #2e9e4f; }
+.switch input:checked + .slider::before { transform: translateX(16px); }
+.switch input:focus-visible + .slider { outline: 2px solid #2e9e4f; outline-offset: 2px; }
+
+/* Disabled row: greyed out with the value struck through. */
+li.disabled .value { text-decoration: line-through; }
+li.disabled .value,
+li.disabled .count { color: #999; }
+
 /* Smooth-ish transitions when the user toggles the theme. */
 body, #summary, #addRow input, li, button {
   transition: background-color .15s ease, color .15s ease, border-color .15s ease;
@@ -77,6 +120,10 @@ html.dark li {
   border-color: #444;
 }
 html.dark li .count { color: #999; }
+html.dark .switch .slider { background: #555; }
+html.dark .switch input:checked + .slider { background: #2e9e4f; }
+html.dark li.disabled .value,
+html.dark li.disabled .count { color: #777; }
 
 html.dark button {
   background: #333;

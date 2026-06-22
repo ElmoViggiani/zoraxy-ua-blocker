@@ -20,7 +20,7 @@ import (
 
 // Plugin identity constants.
 const (
-	PLUGIN_ID       = "com.github.ElmoViggiani.zoraxy-ua-blocker"
+	PLUGIN_ID       = "com.github.elmoviggiani.zoraxy-ua-blocker"
 	PLUGIN_NAME     = "User-Agent Blocker"
 	UI_PATH         = "/ui"
 	CAPTURE_SNIFF   = "/capture/dynamic/sniff"
@@ -56,8 +56,8 @@ func main() {
 		URL:                   "https://github.com/ElmoViggiani/zoraxy-ua-blocker",
 		Type:                  zoraxy_plugin.PluginType_Router,
 		VersionMajor:          1,
-		VersionMinor:          1,
-		VersionPatch:          0,
+		VersionMinor:          3,
+		VersionPatch:          1,
 		DynamicCaptureSniff:   CAPTURE_SNIFF,
 		DynamicCaptureIngress: CAPTURE_INGRESS,
 		UIPath:                UI_PATH,
@@ -120,6 +120,8 @@ func main() {
 	mux.HandleFunc(UI_PATH+"/api/list", handleAPIList)
 	mux.HandleFunc(UI_PATH+"/api/add", handleAPIAdd)
 	mux.HandleFunc(UI_PATH+"/api/delete", handleAPIDelete)
+	mux.HandleFunc(UI_PATH+"/api/toggle", handleAPIToggle)
+	mux.HandleFunc(UI_PATH+"/api/reset-entry", handleAPIResetEntry)
 	mux.HandleFunc(UI_PATH+"/api/reset", handleAPIReset)
 
 	// --- 7. Run --------------------------------------------------------
@@ -229,6 +231,57 @@ func handleAPIDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := blocklist.Remove(v); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// handleAPIToggle enables or disables an existing entry. Disabled entries
+// stay in the list (keeping their count) but are skipped by matching. The
+// `enabled` form value is required and parsed leniently ("1"/"true"/"on"
+// => enabled, "0"/"false"/"off" => disabled); a missing or unrecognised
+// value is a 400 rather than an implicit disable.
+func handleAPIToggle(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	v := r.FormValue("value")
+	if v == "" {
+		http.Error(w, "value required", http.StatusBadRequest)
+		return
+	}
+	switch strings.ToLower(r.FormValue("enabled")) {
+	case "1", "true", "on", "yes":
+		if err := blocklist.SetEnabled(v, true); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	case "0", "false", "off", "no":
+		if err := blocklist.SetEnabled(v, false); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	default:
+		http.Error(w, "enabled required (boolean)", http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// handleAPIResetEntry zeros the count of a single entry.
+func handleAPIResetEntry(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	v := r.FormValue("value")
+	if v == "" {
+		http.Error(w, "value required", http.StatusBadRequest)
+		return
+	}
+	if err := blocklist.ResetCount(v); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

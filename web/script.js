@@ -3,6 +3,8 @@
 const API_LIST   = "api/list";
 const API_ADD    = "api/add";
 const API_DELETE = "api/delete";
+const API_TOGGLE = "api/toggle";
+const API_RESET_ENTRY = "api/reset-entry";
 const API_RESET  = "api/reset";
 
 // Render counts with thousands separators (e.g. "1,243") for readability.
@@ -88,7 +90,23 @@ async function refresh() {
   const ul = document.getElementById("list");
   ul.innerHTML = "";
   for (const e of snap.entries || []) {
+    const enabled = !e.disabled;
     const li = document.createElement("li");
+    if (!enabled) li.classList.add("disabled");
+
+    // Toggle switch: a checkbox styled as a slider via .switch/.slider CSS.
+    // Checked = enabled (participates in matching); unchecked = disabled.
+    const sw = document.createElement("label");
+    sw.className = "switch";
+    sw.title = enabled ? "Enabled — click to disable" : "Disabled — click to enable";
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = enabled;
+    cb.onchange = () => setEnabled(e.value, cb.checked);
+    const slider = document.createElement("span");
+    slider.className = "slider";
+    sw.appendChild(cb);
+    sw.appendChild(slider);
 
     const valueSpan = document.createElement("span");
     valueSpan.className = "value";
@@ -98,13 +116,21 @@ async function refresh() {
     countSpan.className = "count";
     countSpan.textContent = `blocked ${NUMFMT.format(e.count)} times`;
 
+    const resetBtn = document.createElement("button");
+    resetBtn.type = "button";
+    resetBtn.textContent = "Reset";
+    resetBtn.title = "Reset this entry's count to zero";
+    resetBtn.onclick = () => resetEntry(e.value);
+
     const btn = document.createElement("button");
     btn.type = "button";
     btn.textContent = "Delete";
     btn.onclick = () => remove(e.value);
 
+    li.appendChild(sw);
     li.appendChild(valueSpan);
     li.appendChild(countSpan);
+    li.appendChild(resetBtn);
     li.appendChild(btn);
     ul.appendChild(li);
   }
@@ -112,6 +138,11 @@ async function refresh() {
 
 async function add(value)    { await apiPost(API_ADD,    { value }); await refresh(); }
 async function remove(value) { await apiPost(API_DELETE, { value }); await refresh(); }
+async function setEnabled(value, enabled) {
+  await apiPost(API_TOGGLE, { value, enabled: enabled ? "1" : "0" });
+  await refresh();
+}
+async function resetEntry(value) { await apiPost(API_RESET_ENTRY, { value }); await refresh(); }
 
 // ---------------------------------------------------------------------------
 // Reset (two-step "armed" pattern)

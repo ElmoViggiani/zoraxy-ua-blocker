@@ -20,10 +20,16 @@ import (
 // it must be accessed via sync/atomic whenever other goroutines might
 // be concurrently incrementing. Methods holding the write Lock have
 // exclusive access and may read/write Count directly.
+// Disabled, when true, keeps the entry in the list (and preserves its
+// count) but excludes it from matching — RecordMatch skips it. It is
+// tagged omitempty so the on-disk shape is unchanged for the common
+// (enabled) case, and so older data files that predate this field
+// unmarshal to Disabled=false (enabled), preserving prior behaviour.
 type Entry struct {
-	Value string `json:"value"`
-	Count int64  `json:"count"`
-	lower string
+	Value    string `json:"value"`
+	Count    int64  `json:"count"`
+	Disabled bool   `json:"disabled,omitempty"`
+	lower    string
 }
 
 // Snapshot is both the on-disk file shape and the read-only view returned
@@ -106,8 +112,9 @@ func (bl *BlockList) Snapshot() Snapshot {
 	}
 	for i := range bl.entries {
 		out.Entries[i] = Entry{
-			Value: bl.entries[i].Value,
-			Count: atomic.LoadInt64(&bl.entries[i].Count),
+			Value:    bl.entries[i].Value,
+			Count:    atomic.LoadInt64(&bl.entries[i].Count),
+			Disabled: bl.entries[i].Disabled,
 		}
 	}
 	return out
@@ -155,6 +162,52 @@ func (bl *BlockList) Remove(value string) error {
 	return nil
 }
 
+// SetEnabled flips whether the entry matching value (case-insensitive)
+// participates in matching. A disabled entry stays in the list and keeps
+// its count — so TotalBlocked and the sum of visible counts stay equal,
+// unlike Remove — but RecordMatch skips it. Persisted immediately because
+// it is a user-initiated, rare list edit. No-op if value is not found.
+func (bl *BlockList) SetEnabled(value string, enabled bool) error {
+	bl.mu.Lock()
+	defer bl.mu.Unlock()
+	for i := range bl.entries {
+		if strings.EqualFold(bl.entries[i].Value, value) {
+			bl.entries[i].Disabled = !enabled
+			if err := bl.saveLocked(); err != nil {
+				return err
+			}
+			bl.dirty.Store(false)
+			return nil
+		}
+	}
+	return nil
+}
+
+// ResetCount zeros the count of the single entry matching value
+// (case-insensitive) and subtracts the cleared amount from the global
+// total, so the displayed total stays equal to the sum of visible
+// per-entry counts (same invariant Remove preserves). Persisted
+// immediately. No-op if value is not found.
+func (bl *BlockList) ResetCount(value string) error {
+	bl.mu.Lock()
+	defer bl.mu.Unlock()
+	for i := range bl.entries {
+		if strings.EqualFold(bl.entries[i].Value, value) {
+			bl.totalBlocked -= bl.entries[i].Count
+			if bl.totalBlocked < 0 {
+				bl.totalBlocked = 0
+			}
+			bl.entries[i].Count = 0
+			if err := bl.saveLocked(); err != nil {
+				return err
+			}
+			bl.dirty.Store(false)
+			return nil
+		}
+	}
+	return nil
+}
+
 // ResetCounts zeros all per-entry counts and the global total.
 func (bl *BlockList) ResetCounts() error {
 	bl.mu.Lock()
@@ -183,6 +236,9 @@ func (bl *BlockList) RecordMatch(userAgent string) string {
 	defer bl.mu.RUnlock()
 	uaLower := strings.ToLower(userAgent)
 	for i := range bl.entries {
+		if bl.entries[i].Disabled {
+			continue
+		}
 		if strings.Contains(uaLower, bl.entries[i].lower) {
 			atomic.AddInt64(&bl.entries[i].Count, 1)
 			atomic.AddInt64(&bl.totalBlocked, 1)
@@ -211,8 +267,9 @@ func (bl *BlockList) FlushIfDirty() error {
 	}
 	for i := range bl.entries {
 		snap.Entries[i] = Entry{
-			Value: bl.entries[i].Value,
-			Count: atomic.LoadInt64(&bl.entries[i].Count),
+			Value:    bl.entries[i].Value,
+			Count:    atomic.LoadInt64(&bl.entries[i].Count),
+			Disabled: bl.entries[i].Disabled,
 		}
 	}
 	bl.mu.RUnlock()
